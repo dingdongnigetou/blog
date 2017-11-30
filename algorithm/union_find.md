@@ -45,7 +45,7 @@ public void union(int p, int q)
   int pID = find(p);
   int qID = find(q);
 
-  for (int i = 0; i < id.length; i++) {
+  for (int i = 0; i < N; i++) {
     if (id[i] == pID) 
       id[i] = qID;
   }
