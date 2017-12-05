@@ -114,7 +114,16 @@ if (stat(path, &st) == -1) {
     not_found(client);
 }
 ```
-我们注意到还有一段`read & discard headers`的操作，目的就是彻底接收完client的请求头，并丢弃，因为没用，为什么需要读取完所有的请求头？这也是标准定义的，即使你不用，也要读完，读完了才能给client发送response。
+我们注意到还有一段`read & discard headers`的操作，目的就是彻底接收完client的请求头，并丢弃，因为没用，为什么需要读取完所有的请求头？可以说请求头是客户端的要求所在，server不读完并不能知道client的明确需求，所以必须读完后才能reponse。我们发现在最终的临界值比较时，它用的是`strcmp("\n", buf)`，按照标准来说应该`\r\n`才对呀，真相是部分client并没有按照标准，而是使用`\n`，所以tinyhttpd将两者兼容起来了（在get_line中），全部统一成`\n`：
+```cpp
+if (c == '\r'){
+  n = recv(sock, &c, 1, MSG_PEEK); // MSG_PEEK,表示预读，不删除缓冲区的内容
+  if ((n > 0) && (c == '\n'))
+    recv(sock, &c, 1, 0);
+  else
+    c = '\n';
+}
+```
 
 来到最后的分水岭，是cgi就给`execute_cgi`，否则就给`serve_file`：
 ```cpp
@@ -139,9 +148,84 @@ else {
 }
 ```
 
-来到了传说中的cgi处理流程`execute_cgi`,我们看到如果 
+抵达传说中的cgi处理流程`execute_cgi`,我们看到如果是`POST`请求的话，就要读取`Content-Length`头，这个表示request-body的长度，单位bytes，如果没有这个头部的话，那就是bad request（400）：
+```cpp
+else if (strcasecmp(method, "POST") == 0) /*POST*/{
+  numchars = get_line(client, buf, sizeof(buf));
+  while ((numchars > 0) && strcmp("\n", buf)){
+    buf[15] = '\0';
+    if (strcasecmp(buf, "Content-Length:") == 0) 
+      content_length = atoi(&(buf[16]));
+      numchars = get_line(client, buf, sizeof(buf));
+  }
+  if (content_length == -1) {
+    bad_request(client);
+    return;
+  }
+}
+```
+接下来就要fork一个子进程去运行cgi程序了，然后创建管道，用于子进程与server之间的数据传输，管道的原理我们后面在讲，我们先来看子进程中的处理：
+```cpp
+if (pid == 0)  /* child: CGI script */ {
+  ...
+  sprintf(meth_env, "REQUEST_METHOD=%s", method);
+  putenv(meth_env);
+  if (strcasecmp(method, "GET") == 0) {
+      sprintf(query_env, "QUERY_STRING=%s", query_string);
+      putenv(query_env);
+  }
+  else {   /* POST */
+      sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
+      putenv(length_env);
+  }
+  execl(path, NULL);
+  ...
+}
+```
+可以看到，设置了几个环境变量，跟我们之前讲过的CGI标准吻合，最后`execl`执行cgi程序，那么父进程需要做些什么：
+```cpp
+else {    /* parent */
+  ...
+  if (strcasecmp(method, "POST") == 0)
+    for (i = 0; i < content_length; i++) {
+      recv(client, &c, 1, 0);
+      write(cgi_input[1], &c, 1);
+    }
+  while (read(cgi_output[0], &c, 1) > 0)
+    send(client, &c, 1, 0);
 
+  ...
+  waitpid(pid, &status, 0);
+}
+```
+在server中，如果是`POST`方法，那么读取`Content-Length`长度的body，通过管道传输给cgi程序，并在管道等到cgi程序的数据返回，拿到数据后，server直接发送给了client，并回收子进程。
 
+最后来了解下里面用到的管道，看着有点头大，可读性比较差：
+```cpp
+// 子进程（cgi）
+if (pid == 0)  {
+  char meth_env[255];
+  char query_env[255];
+  char length_env[255];
 
+  dup2(cgi_output[1], STDOUT);
+  dup2(cgi_input[0], STDIN);
+  close(cgi_output[0]);
+  close(cgi_input[1]);
+  ...
+}
+// 父进程（server）
+esle {
+  close(cgi_output[1]);
+  close(cgi_input[0]);
+  ...
+}
+```
+很好，初次看不知道干了啥，只知道子进程中有重定向，到标准输入输出，那么子进程与父进程是怎么建立起通信管道的呢？为什么要用两个管道呢？
 
+首先要知道，linux的管道不是双工的，意味着只能单向通信，所以要实现双向的通信，就需要建两个管道了，那怎么建？看图说话：
+
+![](pic/pipe.png)
+
+每个管道两个文件描述符（0,1），0表示read，1表示write，虚线表示被close掉的部分，最终就是双向通信了，注意到Child进程这边做了重定向处理，这样就可以从标准输入读取到server给它的数据，然后由标准输出将数据给到server。
 
