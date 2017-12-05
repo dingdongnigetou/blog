@@ -114,7 +114,9 @@ if (stat(path, &st) == -1) {
     not_found(client);
 }
 ```
-我们注意到还有一段`read & discard headers`的操作，目的就是彻底接收完client的请求头，并丢弃，因为没用，为什么需要读取完所有的请求头？可以说请求头是客户端的要求所在，server不读完并不能知道client的明确需求，所以必须读完后才能reponse。我们发现在最终的临界值比较时，它用的是`strcmp("\n", buf)`，按照标准来说应该`\r\n`才对呀，真相是部分client并没有按照标准，而是使用`\n`，所以tinyhttpd将两者兼容起来了（在get_line中），全部统一成`\n`：
+我们注意到还有一段`read & discard headers`的操作，目的就是彻底接收完client的请求头，并丢弃，因为没用，为什么需要读取完所有的请求头？可以说请求头是客户端的要求所在，server不读完并不能知道client的明确需求，所以必须读完后才能reponse。
+
+我们发现在最终的临界值比较时，它用的是`strcmp("\n", buf)`，按照标准来说应该`\r\n`才对呀，真相是部分client并没有按照标准，而是使用`\n`，所以tinyhttpd将两者兼容起来了（在get_line中），全部统一成`\n`：
 ```cpp
 if (c == '\r'){
   n = recv(sock, &c, 1, MSG_PEEK); // MSG_PEEK,表示预读，不删除缓冲区的内容
@@ -228,4 +230,6 @@ esle {
 ![](pic/pipe.png)
 
 每个管道两个文件描述符（0,1），0表示read，1表示write，虚线表示被close掉的部分，最终就是双向通信了，注意到Child进程这边做了重定向处理，这样就可以从标准输入读取到server给它的数据，然后由标准输出将数据给到server。
+
+虽然理清楚了，但这可读性...我们可以使用[socketpair](https://www.ibm.com/developerworks/cn/linux/l-pipebid/index.html)来实现通信功能，由于是socket，所以原生支持全双工通信，只需要两个fd而不是上面的四个fd了。
 
