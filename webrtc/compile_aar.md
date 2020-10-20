@@ -25,7 +25,7 @@
 ```sh
 mkdir /opt/webrc && cd /opt/webrtc
 git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
-export PATH="$PATH:${HOME}/depot_tools"
+export PATH="$PATH:/opt/webrtc/depot_tools"
 
 ```
 
@@ -37,6 +37,9 @@ gclient sync
 cd src/
 ./build/install-build-deps.sh
 ```
+
+### Issue
+执行`gclient sync`提示`Running depot tools as root is sad.`，解决方法就是修改depot_tools/update_depot_tools文件，注释掉root的判断即可
 
 ## Compile aar
 
