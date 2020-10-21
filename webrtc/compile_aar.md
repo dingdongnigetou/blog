@@ -40,7 +40,7 @@ cd src/
 
 ## Compile aar
 
-### Checkout the specify branch (OPTION 2)
+### Checkout the specify branch
 
 所有的正式版本可以在[这里](https://groups.google.com/g/discuss-webrtc/search?q=%20Release%20Notes)查找到。
 
